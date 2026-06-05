@@ -1,0 +1,13 @@
+version: "3.9"
+services:
+  vessel-collision:
+    build: .
+    volumes:
+      - ./data:/data
+      - ./output:/output
+    environment:
+      - DATA_DIR=/data
+      - OUTPUT_DIR=/output
+      - SPARK_LOCAL_DIRS=/tmp/spark
+    mem_limit: 8g
+    shm_size: 2g

@@ -1,0 +1,11 @@
+data/*.csv
+data/*.zip
+output/
+__pycache__/
+*.pyc
+.env
+*.egg-info/
+dist/
+.DS_Store
+spark-temp/
+D:/spark-temp/
