@@ -211,38 +211,117 @@ vessel-collision/
 
 ## Running with Docker
 
-Docker is the recommended way to run this project. It packages Java 21, Python 3.11, PySpark, and all dependencies into a single portable image. You only need the AIS CSV files in a local `data/` folder.
+Docker is the recommended and easiest way to run this project. The image is publicly available on Docker Hub and packages Java 21, Python 3.11, PySpark, and all dependencies. You do not need to install Python, Java, or PySpark — only Docker Desktop.
 
-### Pull from Docker Hub
-
-```bash
-docker pull YOUR_DOCKERHUB_USERNAME/vessel-collision:latest
-```
-
-### Run with Docker Compose
-
-```bash
-# Clone the repository
-git clone https://github.com/OnkarBasu/Big_data_final_exam.git
-cd Big_data_final_exam
-
-# Place the 31 AIS CSV files in the data/ directory
-# Then run:
-docker compose up
-```
-
-The container reads CSVs from the mounted `/data` volume and writes `collision_map.html` and `collision_map.png` to the mounted `/output` volume.
-
-### Docker Hub
+### Links
 
 | Resource | Link |
 |---|---|
-| Docker Hub Image | `YOUR_DOCKERHUB_USERNAME/vessel-collision:latest` |
-| GitHub Repository | https://github.com/OnkarBasu/Big_data_final_exam |
+| Docker Hub Image | [`onkar45612/vessel-collision:latest`](https://hub.docker.com/r/onkar45612/vessel-collision) |
+| GitHub Repository | [https://github.com/OnkarBasu/Big_data_final_exam](https://github.com/OnkarBasu/Big_data_final_exam) |
 
-### Build locally
+---
+
+### What you need on your local machine
+
+Before running, make sure you have the following in place:
+
+**1. Docker Desktop**
+Download and install from [docker.com](https://www.docker.com/products/docker-desktop). No other software is required.
+
+**2. The AIS CSV data files (57 GB)**
+The dataset is not included in the Docker image as it is too large. You must obtain all 31 daily CSV files for December 2021 from [aisdata.ais.dk](http://aisdata.ais.dk) and place them in a local `data/` folder with exactly this naming pattern:
+
+```
+data/
+├── aisdk-2021-12-01.csv
+├── aisdk-2021-12-02.csv
+├── aisdk-2021-12-03.csv
+│   ... (all 31 files)
+└── aisdk-2021-12-31.csv
+```
+
+**3. A `docker-compose.yml` file**
+Save the following as `docker-compose.yml` in the same directory as your `data/` folder:
+
+```yaml
+version: "3.9"
+services:
+  vessel-collision:
+    image: onkar45612/vessel-collision:latest
+    volumes:
+      - ./data:/data
+      - ./output:/output
+    environment:
+      - DATA_DIR=/data
+      - OUTPUT_DIR=/output
+      - SPARK_LOCAL_DIRS=/tmp/spark
+    mem_limit: 8g
+    shm_size: 2g
+```
+
+**4. Disk space and RAM**
+- At least 100 GB free disk space (57 GB for data + Spark temporary files during processing)
+- At least 8 GB RAM allocated to Docker (set in Docker Desktop → Settings → Resources)
+
+---
+
+### Running the pipeline
+
+Open a terminal in the directory containing `docker-compose.yml` and run:
 
 ```bash
+docker compose up
+```
+
+Docker will automatically pull `onkar45612/vessel-collision:latest` from Docker Hub on the first run. The pipeline will then execute all five stages and print progress to the terminal. **Do not close the terminal while it is running.**
+
+Expected output in the terminal:
+
+```
+=== Stage 1: Ingest ===
+[ingest] Found aisdk-2021-12-01.csv (1698 MB)
+...
+[ingest] 31/31 files available
+
+=== Stage 2: Preprocess ===
+[preprocess] Clean dataset: XX,XXX,XXX rows
+
+=== Stage 3: Detect ===
+[detect] Radius 0.1 nm — found candidate
+
+=== Stage 4: Enrich ===
+
+============================================================
+COLLISION DETECTED
+============================================================
+  Vessel A : MMSI 377084488 — UNKNOWN
+  Vessel B : MMSI 377085000 — ALVA
+  Time     : 2021-12-15 06:43:12
+  Location : 55.000873 N, 13.295165 E
+  Distance : 0.0000 nm (0.0 m)
+============================================================
+
+=== Stage 5: Visualize ===
+Map saved to /output/collision_map.html
+Map saved to /output/collision_map.png
+```
+
+When the pipeline finishes, an `output/` folder will be created in your working directory containing:
+- `collision_map.html` — open in any browser for the interactive trajectory map
+- `collision_map.png` — static image suitable for reports
+
+**Expected runtime:** 2–4 hours depending on machine speed and disk I/O.
+
+---
+
+### Building the image yourself
+
+If you prefer to build the image from source rather than pulling from Docker Hub:
+
+```bash
+git clone https://github.com/OnkarBasu/Big_data_final_exam.git
+cd Big_data_final_exam
 docker compose build
 docker compose up
 ```
