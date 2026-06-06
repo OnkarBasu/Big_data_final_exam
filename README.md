@@ -33,9 +33,20 @@ Both vessels were actively underway at the time of the event. The separation com
 - The right panel shows ALVA's speed over time. ALVA was travelling at roughly 10.4 knots and steadily decelerating as it approached the collision point. The vertical dashed line marks 06:43:12 — the moment of closest approach. After the event, the speed settles around 9.7 knots.
 - The unknown vessel (MMSI 377084488) has no AIS name registered, which is why it shows as UNKNOWN. It was recorded at the same location and timestamp as ALVA, triggering the collision flag.
 
+---
+
 ### Interactive Map
 
-An interactive HTML map (`output/collision_map.html`) is also generated when the pipeline runs. Open it in any browser to zoom in, click on vessels, and inspect individual AIS pings along each trajectory.
+![Interactive Folium Map — Collision Location](output/collision121.png)
+
+**What the map shows:**
+
+- The map is centred on the open Baltic Sea, southwest of Bornholm Island. The Danish coastline is visible on the left edge of the frame.
+- The black warning marker pinpoints the exact collision location at **55.000873°N, 13.295165°E** — in open international waters, well clear of any port or anchorage.
+- The red dot just below the marker is ALVA's trajectory endpoint, showing the vessel's last recorded position in the 10-minute window. Both vessels converge tightly on the same coordinate, confirming the zero-distance collision reading.
+- The hatched rectangle in the lower right is **Schutzgebiet Arkona** — a German marine protected area. The collision occurred outside this zone, in unrestricted shipping lanes.
+- The surrounding purple boundary lines mark Danish maritime zone delineations. The event falls within this zone, consistent with the Danish AIS data source covering these waters.
+- An interactive version of this map (`output/collision_map.html`) is generated when the pipeline runs. Opening it in a browser allows you to zoom in, click on each vessel's path, and inspect individual AIS ping tooltips.
 
 ---
 
