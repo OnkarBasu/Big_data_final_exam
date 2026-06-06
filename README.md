@@ -1,12 +1,12 @@
 # Vessel Collision Detection — Big Data Final Exam
 
-A production-grade PySpark pipeline that processes **57 GB of Danish AIS maritime tracking data** across **31 days in December 2021** to identify two vessels that collided within a 50 nautical mile radius of Bornholm Island in the Baltic Sea.
+A PySpark pipeline that processes **57 GB of Danish AIS maritime tracking data** across **31 days in December 2021** to identify two vessels that collided within a 50 nautical mile radius of Bornholm Island in the Baltic Sea.
 
 ---
 
 ## The Collision
 
-After processing over 15 million clean AIS pings, the pipeline identified the following event:
+After processing over 15 million clean AIS pings, the pipeline identified the following collision event:
 
 | Field | Value |
 |---|---|
@@ -17,7 +17,25 @@ After processing over 15 million clean AIS pings, the pipeline identified the fo
 | **Longitude** | 13.295165° E |
 | **Separation** | 0.0000 nm — direct collision |
 
-Both vessels were actively underway. The Haversine-computed distance was effectively zero, meaning the two ships occupied the same GPS coordinates at the same timestamp.
+Both vessels were actively underway at the time of the event. The separation computed by the Haversine formula was effectively zero, meaning both ships occupied the same GPS coordinates at the same timestamp.
+
+---
+
+## Visualisations
+
+### Trajectory Map and Speed Profile
+
+![Vessel Trajectories and Speed Profile](output/collision_map.png)
+
+**What the charts show:**
+
+- The left panel plots each vessel's GPS path in the 10 minutes before and after the collision. ALVA (red) travels in a straight line heading south-east. The unknown vessel (blue) converges on the same point. The black X marks the exact collision coordinate at 55.000873°N, 13.295165°E.
+- The right panel shows ALVA's speed over time. ALVA was travelling at roughly 10.4 knots and steadily decelerating as it approached the collision point. The vertical dashed line marks 06:43:12 — the moment of closest approach. After the event, the speed settles around 9.7 knots.
+- The unknown vessel (MMSI 377084488) has no AIS name registered, which is why it shows as UNKNOWN. It was recorded at the same location and timestamp as ALVA, triggering the collision flag.
+
+### Interactive Map
+
+An interactive HTML map (`output/collision_map.html`) is also generated when the pipeline runs. Open it in any browser to zoom in, click on vessels, and inspect individual AIS pings along each trajectory.
 
 ---
 
@@ -37,7 +55,7 @@ Both vessels were actively underway. The Haversine-computed distance was effecti
   │          │                   │ • Cache df     │
   └──────────┘                   └───────┬────────┘
                                          │
-                                  clean df (cached)
+                                  clean data (cached)
                                          │
                    ┌─────────────────────┼─────────────────────┐
                    │                     │                     │
@@ -49,7 +67,6 @@ Both vessels were actively underway. The Haversine-computed distance was effecti
             │ self-join  │       │ vessel name│       │ Matplotlib  │
             │ Haversine  │       │ lookup     │       │ PNG chart   │
             └─────┬──────┘       └─────┬──────┘       └──────┬──────┘
-                  │                    │                      │
                   └────────────────────┴──────────────────────┘
                                        │
                                        ▼
@@ -78,32 +95,6 @@ Both vessels were actively underway. The Haversine-computed distance was effecti
 
 ---
 
-## Repository Structure
-
-```
-vessel-collision/
-├── pipeline_run.py        ← Local Windows runner (sets JAVA_HOME, TEST_FILES flag)
-├── Dockerfile             ← Container build (Java 21 + Python 3.11)
-├── docker-compose.yml     ← Volume mounts + memory config
-├── requirements.txt       ← Pinned Python dependencies
-├── CLAUDE.md              ← Build specification
-├── data/                  ← AIS CSV files (not in git — 57 GB)
-│   └── aisdk-2021-12-*.csv
-├── output/                ← Generated maps (not in git)
-│   ├── collision_map.html
-│   └── collision_map.png
-└── src/
-    ├── config.py          ← All constants (thresholds, paths, coordinates)
-    ├── ingest.py          ← File discovery
-    ├── preprocess.py      ← Schema, filters, noise removal, cache
-    ├── detect.py          ← Time-bucket collision detection
-    ├── enrich.py          ← MMSI → vessel name resolution
-    ├── visualize.py       ← Folium HTML + Matplotlib PNG
-    └── main.py            ← Docker entrypoint
-```
-
----
-
 ## Dataset
 
 | Property | Detail |
@@ -117,37 +108,55 @@ vessel-collision/
 
 ---
 
+## Repository Structure
+
+```
+vessel-collision/
+├── pipeline_run.py        ← Local Windows runner
+├── Dockerfile             ← Container build (Java 21 + Python 3.11)
+├── docker-compose.yml     ← Volume mounts + memory config
+├── requirements.txt       ← Pinned Python dependencies
+├── data/                  ← AIS CSV files (not in git — 57 GB)
+│   └── aisdk-2021-12-*.csv
+├── output/
+│   ├── collision_map.html ← Interactive browser map (generated)
+│   └── collision_map.png  ← Static chart (tracked in git)
+└── src/
+    ├── config.py          ← All constants (thresholds, paths, coordinates)
+    ├── ingest.py          ← File discovery
+    ├── preprocess.py      ← Reading, filtering, cleaning, cache
+    ├── detect.py          ← Collision detection algorithm
+    ├── enrich.py          ← MMSI → vessel name lookup
+    ├── visualize.py       ← Map and chart generation
+    └── main.py            ← Docker entrypoint
+```
+
+---
+
 ## Source Code — Stage by Stage
 
-### `src/config.py` — All Constants
+---
 
-Every threshold, coordinate, and path lives here. No magic numbers anywhere else in the codebase.
+### Stage 1 — `src/config.py` — Central Settings
+
+All the numbers the pipeline uses — distances, speed limits, coordinates, date range — are defined in one place here. No other file contains hardcoded values.
 
 ```python
-# Geographic filter — centre of Bornholm Island
-CENTER_LAT = 55.225000
+CENTER_LAT = 55.225000          # Bornholm Island centre
 CENTER_LON = 14.245000
-RADIUS_NM  = 50.0
+RADIUS_NM  = 50.0               # Search radius in nautical miles
 
-# Temporal filter
-START_DATE = "2021-12-01"
-END_DATE   = "2021-12-31"
-
-# Noise removal
-MAX_SPEED_KNOTS      = 50.0        # GPS jump threshold
-MIN_MOVING_SOG_KNOTS = 0.5         # median SOG filter
+MAX_SPEED_KNOTS      = 50.0     # Above this = GPS error, not real movement
+MIN_MOVING_SOG_KNOTS = 0.5      # Below this median = vessel is stationary
 STATIONARY_NAV_CODES = ["At anchor", "Moored"]
 
-# Collision detection
-COLLISION_RADIUS_NM  = 0.1         # first attempt, relaxes to 0.2 then 0.5
-TIME_BUCKET_SECONDS  = 60          # 1-minute buckets
-TIME_BUCKET_SLACK    = 1           # ±1 bucket overlap
+COLLISION_RADIUS_NM  = 0.1      # First search threshold (relaxes if nothing found)
+TIME_BUCKET_SECONDS  = 60       # Group pings into 1-minute windows
+TIME_BUCKET_SLACK    = 1        # Check ±1 window either side
 
-# Paths — read from Docker environment variables at runtime
-DATA_DIR   = os.getenv("DATA_DIR",   "/data")
+DATA_DIR   = os.getenv("DATA_DIR",   "/data")    # Reads from Docker env variable
 OUTPUT_DIR = os.getenv("OUTPUT_DIR", "/output")
 
-# Danish AIS column names (exact header strings in the CSV)
 AIS_COLUMNS = {
     "timestamp":  "# Timestamp",
     "mmsi":       "MMSI",
@@ -161,11 +170,17 @@ AIS_COLUMNS = {
 }
 ```
 
+**What this block does:**
+- Sets the Bornholm Island coordinates as the centre point for the 50 nm search area
+- Defines speed and status thresholds used to throw out parked or faulty vessel records
+- Maps the exact column header names from the Danish AIS CSV files — these strings must match the actual file headers precisely
+- Reads the data and output folder paths from Docker environment variables at runtime, so the same image works on any machine without code changes
+
 ---
 
-### `src/ingest.py` — File Discovery
+### Stage 2 — `src/ingest.py` — File Discovery
 
-Scans the local `data/` directory for the 31 expected daily CSV files. Returns a list of absolute paths. No data is read at this point.
+Checks which of the 31 daily CSV files are present on disk and returns their paths. Spark does not start at this point — this stage just builds the list.
 
 ```python
 def load_december_2021(data_dir: str = DATA_DIR) -> list[str]:
@@ -185,22 +200,25 @@ def load_december_2021(data_dir: str = DATA_DIR) -> list[str]:
     return paths
 ```
 
-**Why:** Checking file existence before starting Spark is cheap. It surfaces missing files immediately rather than letting Spark fail silently mid-run.
+**What this block does:**
+- Loops through every day in December 2021 and builds the expected filename for each day
+- Checks whether each file actually exists in the data folder before adding it to the list
+- Prints the file size in MB so you can immediately see if any files are missing or unexpectedly small
+- Returns a plain list of file paths — nothing is read yet, this is purely a file system check
 
 ---
 
-### `src/preprocess.py` — Reading, Cleaning, Caching
+### Stage 3 — `src/preprocess.py` — Reading and Cleaning
 
-This is the heaviest stage. It reads all 57 GB, applies five layers of cleaning, and caches the result.
+This is the longest-running stage. It reads all 57 GB into Spark and strips out bad, irrelevant, or stationary records through five sequential filters.
 
-#### Haversine as a native Spark SQL expression
+#### The Haversine Formula
 
-The distance formula runs entirely on the JVM — no Python UDF serialisation overhead.
+This calculates the true curved-earth distance between two GPS coordinates, in nautical miles. It runs as a native database expression inside Spark — not as a Python function — which makes it significantly faster.
 
 ```python
-def haversine_nm_expr(lat_col: str, lon_col: str, lat2: float, lon2: float):
-    """Distance from a DataFrame column to a fixed point, in nautical miles."""
-    R = 3440.065  # Earth radius in nautical miles
+def haversine_nm_expr(lat_col, lon_col, lat2, lon2):
+    R = 3440.065   # Earth's radius in nautical miles
     dlat = F.radians(F.col(lat_col) - F.lit(lat2))
     dlon = F.radians(F.col(lon_col) - F.lit(lon2))
     a = (
@@ -211,8 +229,7 @@ def haversine_nm_expr(lat_col: str, lon_col: str, lat2: float, lon2: float):
     )
     return F.lit(2 * R) * F.asin(F.sqrt(a))
 
-def haversine_nm_expr_pair(lat1: str, lon1: str, lat2: str, lon2: str):
-    """Distance between two DataFrame columns — used in detect.py."""
+def haversine_nm_expr_pair(lat1, lon1, lat2, lon2):
     R = 3440.065
     dlat = F.radians(F.col(lat1) - F.col(lat2))
     dlon = F.radians(F.col(lon1) - F.col(lon2))
@@ -225,9 +242,12 @@ def haversine_nm_expr_pair(lat1: str, lon1: str, lat2: str, lon2: str):
     return F.lit(2 * R) * F.asin(F.sqrt(a))
 ```
 
-#### Reading without an explicit schema
+**What these two functions do:**
+- `haversine_nm_expr` — measures the distance from each vessel ping to a fixed point (the centre of Bornholm). Used in Stage 3 to filter out pings that are more than 50 nm away
+- `haversine_nm_expr_pair` — measures the distance between two vessel pings that are both moving. Used in Stage 4 to check whether two ships were actually close to each other
+- Both return the result in nautical miles and run entirely inside Spark's engine, not Python
 
-The CSV has 25 columns. If an explicit `StructType` is provided, Spark maps it **positionally**, not by name — causing column misalignment. The fix: read without a schema, then select the 9 required columns by header name and cast them.
+#### Reading the CSV files
 
 ```python
 raw = spark.read.option("header", "true").csv(csv_files)
@@ -239,27 +259,32 @@ df = raw.select(
     raw[cols["lon"]].cast(DoubleType()).alias("lon"),
     raw[cols["sog"]].cast(DoubleType()).alias("sog"),
     raw[cols["cog"]].cast(DoubleType()).alias("cog"),
-    raw[cols["nav_status"]].alias("nav_status"),   # kept as string — values like "Under way"
+    raw[cols["nav_status"]].alias("nav_status"),
     raw[cols["name"]].alias("name"),
-    raw[cols["ship_type"]].alias("ship_type"),      # kept as string — values like "Cargo"
+    raw[cols["ship_type"]].alias("ship_type"),
 )
 ```
 
-**Why `spark.sql.ansi.enabled=false`:** The SOG column sometimes contains the string `'GPS'` (a sensor artefact). With ANSI on, casting `'GPS'` to `DoubleType` raises `CAST_INVALID_INPUT`. With ANSI off, it silently becomes `null`, which is then dropped by the null filter.
+**What this block does:**
+- Reads all 31 CSV files in a single pass using the header row to identify columns by name, not by position
+- Picks only the 9 columns needed out of the 25 in each file
+- Converts the timestamp string (`"15/12/2021 06:43:12"`) into a proper date-time value Spark can sort and compare
+- Converts latitude, longitude, and speed to decimal numbers
+- Keeps navigational status and ship type as plain text — the raw data uses words like `"Under way using engine"` rather than numeric codes, so casting to integer would fail
 
-#### Five cleaning layers
+#### The five cleaning filters
 
 ```python
-# 1 — Temporal filter: drop rows outside December 2021
+# Filter 1 — keep only December 2021 records
 df = df.filter(
     (F.col("timestamp") >= F.lit("2021-12-01").cast("timestamp")) &
     (F.col("timestamp") <  F.lit("2022-01-01").cast("timestamp"))
 )
 
-# 2 — Geographic filter: keep only pings within 50 nm of Bornholm
+# Filter 2 — keep only pings within 50 nm of Bornholm
 df = df.filter(haversine_nm_expr("lat", "lon", CENTER_LAT, CENTER_LON) <= RADIUS_NM)
 
-# 3 — Range validation: drop nulls, invalid lat/lon, non-9-digit MMSI
+# Filter 3 — remove nulls, impossible coordinates, and invalid MMSI numbers
 df = df.filter(
     F.col("mmsi").isNotNull() &
     F.col("lat").isNotNull() & F.col("lon").isNotNull() &
@@ -268,7 +293,7 @@ df = df.filter(
     (F.length(F.col("mmsi").cast("string")) == 9)
 )
 
-# 4 — GPS jump filter: drop pings implying speed > 50 knots
+# Filter 4 — GPS jump filter: remove pings that imply physically impossible speeds
 w = Window.partitionBy("mmsi").orderBy("timestamp")
 df = (
     df.withColumn("prev_lat", F.lag("lat", 1).over(w))
@@ -277,8 +302,7 @@ df = (
       .withColumn("dt_hours",
           (F.unix_timestamp("timestamp") - F.unix_timestamp("prev_ts")) / 3600.0)
       .withColumn("implied_speed",
-          # F.when guard prevents divide-by-zero for same-timestamp pings
-          F.when(F.col("dt_hours") > 0,
+          F.when(F.col("dt_hours") > 0,   # guard against same-timestamp pings
               haversine_nm_expr_pair("lat", "lon", "prev_lat", "prev_lon") / F.col("dt_hours")
           ))
 )
@@ -286,7 +310,7 @@ df = df.filter(
     F.col("implied_speed").isNull() | (F.col("implied_speed") <= MAX_SPEED_KNOTS)
 ).drop("prev_lat", "prev_lon", "prev_ts", "dt_hours", "implied_speed")
 
-# 5 — Stationary vessel exclusion
+# Filter 5 — remove vessels that are anchored or moored, and vessels barely moving
 df = df.filter(~F.col("nav_status").isin(STATIONARY_NAV_CODES))
 
 moving_mmsis = (
@@ -295,26 +319,29 @@ moving_mmsis = (
       .filter(F.col("median_sog") >= MIN_MOVING_SOG_KNOTS)
       .select("mmsi")
 )
-# broadcast() — moving_mmsis is tiny; avoids a shuffle join
 df = df.join(F.broadcast(moving_mmsis), on="mmsi", how="inner")
 
-# Repartition by MMSI hash and cache — all downstream stages read from RAM
+# Save the cleaned data into memory so later stages do not re-read from disk
 df = df.repartition(24, "mmsi").cache()
 count = df.count()
 print(f"[preprocess] Clean dataset: {count:,} rows")
 ```
 
+**What each filter does:**
+- **Filter 1** — drops any rows from outside December 2021. The raw files occasionally contain stray records from adjacent months
+- **Filter 2** — the single biggest reduction. Applies the Haversine formula to every remaining ping and keeps only those within 50 nautical miles of Bornholm. This removes roughly 90% of the 57 GB
+- **Filter 3** — drops rows where coordinates are missing, out of valid range (e.g. latitude 999), or where the MMSI vessel ID is not exactly 9 digits
+- **Filter 4** — for each vessel, looks at consecutive GPS pings in time order and calculates the implied speed between them. Any ping that would require travelling faster than 50 knots is a GPS error and is dropped. The `F.when(dt_hours > 0, ...)` guard handles the case where two pings have the exact same timestamp, which would cause a divide-by-zero
+- **Filter 5** — removes vessels that are anchored or moored (they cannot collide with anything), then removes any vessel whose median speed across the whole month is below half a knot (effectively stationary even if not flagged)
+- The final `.cache()` saves the clean result in memory so that the detect, enrich, and visualise stages can all read from RAM rather than re-reading 57 GB from disk each time
+
 ---
 
-### `src/detect.py` — Collision Detection
+### Stage 4 — `src/detect.py` — Finding the Collision
 
-#### Why time buckets?
+Searches the cleaned pings for two different vessels that were at the same place at the same time.
 
-A naïve O(n²) cross-join between all pings is infeasible at 15 million rows. Instead, each ping is assigned a one-minute time bucket. Two vessels can only collide if their pings fall in the same (or adjacent) bucket.
-
-#### Why three equi-joins instead of a `BETWEEN` join?
-
-A non-equi `BETWEEN` join forces Spark into a **cross-join** (no hash join possible), which is prohibitively slow. The equivalent result is achieved with three fast hash joins — bucket, bucket+1, bucket−1 — unioned together.
+#### The collision result structure
 
 ```python
 @dataclass
@@ -325,24 +352,39 @@ class CollisionResult:
     event_lat:   float
     event_lon:   float
     distance_nm: float
+```
 
+**What this does:**
+- Defines a simple named container to hold the collision answer — the two vessel IDs, the time it happened, the coordinates, and the measured distance
+- Every downstream stage (enrich, visualize) receives this object and reads from it
 
+#### The detection logic
+
+```python
 def find_collision(df: DataFrame) -> CollisionResult:
+    # Assign every ping to a 1-minute time window (bucket)
     df = df.withColumn(
         "time_bucket",
         (F.unix_timestamp("timestamp") / TIME_BUCKET_SECONDS).cast("long"),
     )
-    # Try progressively larger radii if no pair found at the tight threshold
+    # Try tight radius first, relax if nothing found
     for radius in [COLLISION_RADIUS_NM, 0.2, 0.5]:
         print(f"[detect] Trying collision radius = {radius} nm")
         result = _run_detection(df, radius)
         if result is not None:
             return result
     raise RuntimeError("No collision candidates found even at 0.5 nm.")
+```
 
+**What this block does:**
+- Converts each ping's timestamp into a bucket number (e.g. all pings in the minute 06:43:00–06:43:59 get the same bucket number)
+- Tries to find a collision at 0.1 nautical miles first. If nothing is found, relaxes the search to 0.2 nm, then 0.5 nm
+- This progressive approach ensures the algorithm always returns the closest possible pair rather than failing if the threshold is slightly too tight
 
+#### The pair matching
+
+```python
 def _pair_select(a, b):
-    """Join two aliases on equal time_bucket + MMSI ordering, flatten columns."""
     return (
         a.join(b,
             (F.col("a.time_bucket") == F.col("b.time_bucket")) &
@@ -357,12 +399,11 @@ def _pair_select(a, b):
         )
     )
 
-
-def _run_detection(df: DataFrame, radius: float):
+def _run_detection(df, radius):
     a  = df.alias("a")
-    b0 = df.alias("b")                                                  # exact bucket
-    b1 = df.withColumn("time_bucket", F.col("time_bucket") + TIME_BUCKET_SLACK).alias("b")  # bucket+1
-    b2 = df.withColumn("time_bucket", F.col("time_bucket") - TIME_BUCKET_SLACK).alias("b")  # bucket-1
+    b0 = df.alias("b")
+    b1 = df.withColumn("time_bucket", F.col("time_bucket") + TIME_BUCKET_SLACK).alias("b")
+    b2 = df.withColumn("time_bucket", F.col("time_bucket") - TIME_BUCKET_SLACK).alias("b")
 
     pairs = _pair_select(a, b0).union(_pair_select(a, b1)).union(_pair_select(a, b2))
 
@@ -371,7 +412,6 @@ def _run_detection(df: DataFrame, radius: float):
         haversine_nm_expr_pair("lat_a", "lon_a", "lat_b", "lon_b"),
     ).filter(F.col("distance_nm") <= radius)
 
-    # Single collect() — no pre-count scan; limit(1) pushes down to Spark planner
     rows = pairs.orderBy("distance_nm").limit(1).collect()
     if not rows:
         return None
@@ -386,11 +426,18 @@ def _run_detection(df: DataFrame, radius: float):
     )
 ```
 
+**What this block does:**
+- `_pair_select` joins the dataset against itself — comparing every vessel ping against every other vessel's ping in the same time bucket. The `mmsi_a < mmsi_b` condition ensures each pair is only counted once (not both A-vs-B and B-vs-A)
+- `_run_detection` runs three versions of this join: one for the exact same minute bucket, one for the bucket one minute ahead, one for the bucket one minute behind. This catches pairs where one vessel's ping falls just before a minute boundary and the other falls just after
+- The three results are stacked together and the Haversine distance is calculated for every candidate pair
+- Only pairs within the distance threshold are kept, and the single closest pair is returned
+- Using three separate joins (rather than one range-based join) is a deliberate performance choice — Spark can execute these as fast hash joins rather than a slow cross-join
+
 ---
 
-### `src/enrich.py` — Vessel Name Resolution
+### Stage 5 — `src/enrich.py` — Vessel Name Lookup
 
-Resolves MMSI numbers to human-readable names by scanning the cached DataFrame for the most frequently occurring non-null name value for each MMSI.
+Turns the raw MMSI numbers in the collision result into human-readable vessel names.
 
 ```python
 def resolve_names(df: DataFrame, mmsis: List[int]) -> Dict[int, str]:
@@ -399,10 +446,9 @@ def resolve_names(df: DataFrame, mmsis: List[int]) -> Dict[int, str]:
             df.filter(F.col("mmsi").isin(mmsis))
               .filter(F.col("name").isNotNull() & (F.col("name") != ""))
               .groupBy("mmsi")
-              .agg(F.mode("name").alias("vessel_name"))   # most frequent name wins
+              .agg(F.mode("name").alias("vessel_name"))
         )
     except Exception:
-        # F.mode() not available in older Spark builds — fall back to first non-null
         names_df = (
             df.filter(F.col("mmsi").isin(mmsis))
               .filter(F.col("name").isNotNull() & (F.col("name") != ""))
@@ -413,15 +459,21 @@ def resolve_names(df: DataFrame, mmsis: List[int]) -> Dict[int, str]:
     rows = names_df.collect()
     result = {row["mmsi"]: row["vessel_name"] for row in rows}
     for mmsi in mmsis:
-        result.setdefault(mmsi, f"UNKNOWN ({mmsi})")   # guard if no name pings found
+        result.setdefault(mmsi, f"UNKNOWN ({mmsi})")
     return result
 ```
 
+**What this block does:**
+- Filters the cleaned dataset down to only the two vessels involved in the collision
+- Scans all their pings across the full month to find the most frequently broadcast name — vessels sometimes transmit slightly different name strings in different pings, so the most common one wins
+- Falls back to the first non-empty name found if the `mode` function is unavailable in the Spark version being used
+- If a vessel never broadcast a name at all (as is the case for MMSI 377084488), it returns `"UNKNOWN"` rather than crashing
+
 ---
 
-### `src/visualize.py` — Output Maps
+### Stage 6 — `src/visualize.py` — Generating the Maps
 
-Filters the cached DataFrame to a ±10 minute window around the collision, collects only that small slice to the driver, and generates two output files.
+Takes the collision result and draws two output files: an interactive HTML map and a static PNG chart.
 
 ```python
 def plot_trajectories(df, result, vessel_names, output_dir=OUTPUT_DIR):
@@ -435,104 +487,158 @@ def plot_trajectories(df, result, vessel_names, output_dir=OUTPUT_DIR):
             (F.col("timestamp") <= window_end)
         )
         .orderBy("mmsi", "timestamp")
-        .toPandas()   # collect only ~20 minutes of two vessels — tiny slice
+        .toPandas()
     )
 
-    _save_folium(traj_pd, result, vessel_names, output_dir)      # interactive HTML
-    _save_matplotlib(traj_pd, result, vessel_names, output_dir)  # static PNG
+    _save_folium(traj_pd, result, vessel_names, output_dir)
+    _save_matplotlib(traj_pd, result, vessel_names, output_dir)
 ```
 
-**Folium map:** draws coloured polyline trajectories with start/end markers and a collision point popup.
+**What this block does:**
+- Cuts the dataset down to only a 20-minute window (10 minutes either side of the collision) for the two vessels involved — rather than pulling all 15 million rows to the local machine
+- Converts that small slice from a Spark DataFrame into a regular Pandas table, which can then be passed to charting libraries
+- Calls two separate functions to produce the interactive HTML map and the static PNG
 
-**Matplotlib chart:** two panels — left is the geographic trajectory (lon vs lat), right is the speed profile (SOG over time) for both vessels, with a vertical line at the collision timestamp.
+```python
+def _save_folium(traj_pd, result, vessel_names, output_dir):
+    m = folium.Map(location=[result.event_lat, result.event_lon], zoom_start=12)
+    colors = {result.mmsi_a: "blue", result.mmsi_b: "red"}
+
+    for mmsi, group in traj_pd.groupby("mmsi"):
+        coords = list(zip(group["lat"], group["lon"]))
+        folium.PolyLine(coords, color=colors[mmsi], weight=3,
+                        tooltip=f"MMSI {mmsi} — {vessel_names.get(mmsi)}").add_to(m)
+        folium.CircleMarker(coords[0],  radius=5, color=colors[mmsi], fill=True, tooltip="Start").add_to(m)
+        folium.CircleMarker(coords[-1], radius=5, color=colors[mmsi], fill=True, tooltip="End").add_to(m)
+
+    folium.Marker(
+        [result.event_lat, result.event_lon],
+        popup=f"Collision at {result.event_time}<br>Distance: {result.distance_nm:.4f} nm",
+        icon=folium.Icon(color="black", icon="warning-sign", prefix="glyphicon"),
+    ).add_to(m)
+    m.save(os.path.join(output_dir, "collision_map.html"))
+```
+
+**What this block does:**
+- Creates an interactive OpenStreetMap centred on the collision point
+- Draws each vessel's path as a coloured line — blue for vessel A, red for ALVA
+- Adds circle markers at the start and end of each path so you can see which direction each vessel was travelling
+- Places a black warning marker at the exact collision coordinate with a popup showing the time and distance
+- Saves the result as an HTML file that works in any browser, with no internet connection required
+
+```python
+def _save_matplotlib(traj_pd, result, vessel_names, output_dir):
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6))
+
+    for mmsi, group in traj_pd.groupby("mmsi"):
+        ax1.plot(group["lon"], group["lat"], color=colors[mmsi],
+                 label=f"{vessel_names.get(mmsi)} ({mmsi})", linewidth=2)
+        ax1.scatter(group["lon"].iloc[0], group["lat"].iloc[0], ...)
+        ax1.scatter(group["lon"].iloc[-1], group["lat"].iloc[-1], ...)
+
+    ax1.scatter(result.event_lon, result.event_lat, color="black",
+                marker="x", s=150, label="Collision")
+
+    for mmsi, group in traj_pd.groupby("mmsi"):
+        ax2.plot(group["timestamp"], group["sog"], color=colors[mmsi],
+                 label=f"{vessel_names.get(mmsi)} SOG")
+
+    ax2.axvline(result.event_time, color="black", linestyle="--", label="Collision time")
+    fig.savefig(os.path.join(output_dir, "collision_map.png"), dpi=150)
+```
+
+**What this block does:**
+- Creates a two-panel static image saved as a PNG file
+- The left panel plots the geographic path of each vessel on a latitude/longitude grid, with the collision marked as a black X
+- The right panel plots each vessel's speed (in knots) over the 20-minute window, with a vertical dashed line at the exact collision moment — this makes it easy to see whether vessels were accelerating, decelerating, or maintaining speed at the point of impact
+- Saves at 150 DPI — high enough resolution for a printed report
 
 ---
 
 ### `src/main.py` — Docker Entrypoint
 
-The Docker `CMD` runs this module. It builds the SparkSession with all performance configs and calls each stage in order.
+This is the script the Docker container runs. It creates the Spark session and calls each stage in order.
 
 ```python
 def main():
     spark = (
         SparkSession.builder
         .appName("VesselCollisionDetection")
-        .master("local[*]")                                         # use all available cores
-        .config("spark.driver.memory",                      "6g")
-        .config("spark.sql.shuffle.partitions",             "24")
-        .config("spark.sql.files.maxPartitionBytes",        "268435456")  # 256 MB partitions
-        .config("spark.sql.ansi.enabled",                   "false")      # tolerate dirty AIS data
-        .config("spark.sql.adaptive.enabled",               "true")       # AQE auto-coalescing
+        .master("local[*]")
+        .config("spark.driver.memory",                           "6g")
+        .config("spark.sql.shuffle.partitions",                  "24")
+        .config("spark.sql.files.maxPartitionBytes",             "268435456")
+        .config("spark.sql.ansi.enabled",                        "false")
+        .config("spark.sql.adaptive.enabled",                    "true")
         .config("spark.sql.adaptive.coalescePartitions.enabled", "true")
         .config("spark.serializer", "org.apache.spark.serializer.KryoSerializer")
         .getOrCreate()
     )
     spark.sparkContext.setLogLevel("WARN")
 
-    print("=== Stage 1: Ingest ===")
     csv_files = ingest.load_december_2021(DATA_DIR)
+    df        = preprocess.load_and_clean(spark, csv_files)
+    result    = detect.find_collision(df)
+    names     = enrich.resolve_names(df, [result.mmsi_a, result.mmsi_b])
 
-    print("=== Stage 2: Preprocess ===")
-    df = preprocess.load_and_clean(spark, csv_files)
-
-    print("=== Stage 3: Detect ===")
-    result = detect.find_collision(df)
-
-    print("=== Stage 4: Enrich ===")
-    names = enrich.resolve_names(df, [result.mmsi_a, result.mmsi_b])
-
-    print("=" * 60)
-    print("COLLISION DETECTED")
     print(f"  Vessel A : MMSI {result.mmsi_a} — {names[result.mmsi_a]}")
     print(f"  Vessel B : MMSI {result.mmsi_b} — {names[result.mmsi_b]}")
     print(f"  Time     : {result.event_time}")
     print(f"  Location : {result.event_lat:.6f} N, {result.event_lon:.6f} E")
     print(f"  Distance : {result.distance_nm:.4f} nm ({result.distance_nm * 1852:.1f} m)")
-    print("=" * 60)
 
-    print("=== Stage 5: Visualize ===")
     visualize.plot_trajectories(df, result, names, OUTPUT_DIR)
-
     spark.stop()
 ```
+
+**What this block does:**
+- Starts a Spark session using all available CPU cores (`local[*]`) and allocates 6 GB of RAM to the driver process
+- `ansi.enabled = false` allows Spark to silently ignore corrupt values in the data (e.g. the text string `"GPS"` appearing in a speed column) instead of crashing
+- `adaptive.enabled = true` lets Spark automatically optimise the number of processing partitions at runtime based on data size
+- Calls ingest → preprocess → detect → enrich → visualize in sequence, passing the result of each stage into the next
+- Prints the final collision result to the terminal in a readable format
 
 ---
 
 ## Data Quality Challenges
 
-| Issue | Example | Fix |
+The raw AIS data contains a number of real-world issues that were handled explicitly:
+
+| Issue | Example | Fix Applied |
 |---|---|---|
-| Text in numeric fields | `'GPS'` in SOG column | ANSI mode off — bad casts return null |
-| Text navigational status | `"Under way using engine"` instead of integer | Kept as string, filter uses text values |
-| Text ship type | `"Passenger"`, `"Cargo"` instead of integer | Kept as string |
-| Schema positional mismatch | Explicit StructType maps by position, not name | Read without schema, select by column name |
-| GPS jumps | Ping implying 200-knot speed | Haversine speed check per consecutive ping pair |
-| Divide-by-zero | Two pings with the same timestamp | `F.when(dt_hours > 0, ...)` guard |
-| Null coordinates | Missing lat/lon | Dropped by range validation layer |
-| Invalid MMSI | Non-9-digit identifiers | `F.length(mmsi.cast("string")) == 9` filter |
+| Text in a numeric column | `'GPS'` appearing in the speed column | ANSI mode off — bad values silently become null |
+| Navigational status as words | `"Under way using engine"` | Kept as text; filters use the text values directly |
+| Ship type as words | `"Passenger"`, `"Cargo"` | Kept as text |
+| 25-column CSV, 9-column schema | Explicit schema maps by position, not name | Read without schema, pick columns by header name |
+| GPS position jumps | Ping implying a vessel moved at 200 knots | Speed check between each consecutive ping pair |
+| Two pings at the same second | Would cause divide-by-zero in speed check | Guarded with `F.when(time_gap > 0, ...)` |
+| Missing coordinates | Null lat/lon fields | Dropped by the range validation filter |
+| Invalid vessel ID | MMSI not exactly 9 digits | Filtered by string length check |
 
 ---
 
 ## Performance Optimisations
 
-| Optimisation | Impact |
+Running a 57 GB pipeline on a local machine required a series of deliberate choices:
+
+| Optimisation | What it achieves |
 |---|---|
-| Read without schema, select by column name | Avoids positional mismatch on 25-column CSV |
-| Native Spark SQL Haversine (no Python UDF) | JVM execution — no Python serialisation |
-| Geographic filter before all joins | Drops ~90% of data in Stage 2 |
-| Three equi-joins unioned instead of non-equi `BETWEEN` | Enables hash join; eliminates cross-join |
-| `broadcast()` on moving-MMSI allowlist | Avoids shuffle join for small DataFrame |
-| `.cache()` after cleaning | Detect, enrich, visualize all read from RAM |
-| `repartition(24, "mmsi")` | Collocates vessel pings; matches CPU core count |
-| Adaptive Query Execution | Spark auto-coalesces partitions at runtime |
-| `SPARK_LOCAL_DIRS` → external drive | Prevents C: drive filling during shuffle |
-| Single `.collect()` in detect, no pre-count | Eliminates one full scan of the join result |
+| Select columns by header name, not position | Prevents column mismatch on the 25-column CSV |
+| Haversine as a Spark SQL expression (not Python) | Runs inside the Java engine — no data leaves Spark to Python |
+| Geographic filter applied first | Removes ~90% of the data before any joins run |
+| Three equi-joins unioned instead of one range join | Enables fast hash joins; a range join forces a slow cross-join |
+| `broadcast()` on the moving-vessel list | Avoids a full shuffle when joining against a tiny DataFrame |
+| `.cache()` after cleaning | Detect, enrich, and visualize all read from RAM, not disk |
+| `repartition(24, "mmsi")` | Groups each vessel's data onto the same partition |
+| Adaptive Query Execution enabled | Spark merges small partitions automatically at runtime |
+| `SPARK_LOCAL_DIRS` on external drive | Prevents Spark's temp files from filling the system drive |
+| Single `.collect()` in detect, no pre-count | Avoids scanning the join result twice |
 
 ---
 
 ## Running with Docker (Recommended)
 
-Docker is the easiest way to run this project. The image is publicly available on Docker Hub and bundles Java 21, Python 3.11, PySpark, and all dependencies. You only need Docker Desktop.
+Docker is the recommended way to run this project. The pre-built image is publicly available on Docker Hub and packages Java 21, Python 3.11, PySpark, and all dependencies. You only need Docker Desktop — no other software required.
 
 | Resource | Link |
 |---|---|
@@ -544,25 +650,23 @@ Docker is the easiest way to run this project. The image is publicly available o
 ### What you need on your machine
 
 **1. Docker Desktop**
-Download from [docker.com](https://www.docker.com/products/docker-desktop). Ensure it is running before you proceed.
-
-In Docker Desktop → Settings → Resources, allocate **at least 8 GB RAM** to Docker.
+Download from [docker.com](https://www.docker.com/products/docker-desktop). Once installed, go to Settings → Resources and allocate at least **8 GB RAM** to Docker.
 
 **2. The AIS CSV data files (57 GB)**
-The dataset is not in the image. Download all 31 daily files for December 2021 from [aisdata.ais.dk](http://aisdata.ais.dk) and place them in a local `data/` folder:
+The dataset is not included in the image. Download all 31 daily files for December 2021 from [aisdata.ais.dk](http://aisdata.ais.dk) and place them in a local `data/` folder:
 
 ```
-your-folder/
+your-working-folder/
 ├── data/
 │   ├── aisdk-2021-12-01.csv
 │   ├── aisdk-2021-12-02.csv
 │   │   ... (all 31 files)
 │   └── aisdk-2021-12-31.csv
-└── docker-compose.yml          ← create this (see below)
+└── docker-compose.yml
 ```
 
 **3. A `docker-compose.yml` file**
-Create a file called `docker-compose.yml` in the same directory as your `data/` folder with this exact content:
+Create a file called `docker-compose.yml` in the same folder as your `data/` directory with exactly this content:
 
 ```yaml
 version: "3.9"
@@ -580,10 +684,11 @@ services:
     shm_size: 2g
 ```
 
-> **Important:** Use `image:` (not `build:`). This pulls the pre-built image from Docker Hub. Do not run the container from Docker Desktop's UI — it will not apply the volume mounts. Always use the terminal command below.
+> Use `image:` (not `build:`). This pulls the pre-built image from Docker Hub.
+> Always run from the terminal using `docker compose up` — do **not** start the container from Docker Desktop's UI, as it will not apply the volume mounts and the pipeline will fail with a missing data error.
 
 **4. Disk space**
-At least 100 GB free (57 GB data + Spark temp files during processing).
+At least 100 GB free (57 GB for data + Spark temporary files written during processing).
 
 ---
 
@@ -595,9 +700,9 @@ Open a terminal in the folder containing `docker-compose.yml` and run:
 docker compose up
 ```
 
-On the first run Docker pulls the image automatically (~2 GB download). The pipeline then runs all five stages. **Do not close the terminal while it is running.**
+Docker pulls the image automatically on the first run (~2 GB download). The pipeline then runs all five stages and prints progress to the terminal. Do not close the terminal while it is running.
 
-Expected terminal output:
+Expected output:
 
 ```
 === Stage 1: Ingest ===
@@ -628,15 +733,15 @@ COLLISION DETECTED
 [visualize] Saved /output/collision_map.png
 ```
 
-When finished, an `output/` folder appears next to your `docker-compose.yml` containing:
+When the pipeline finishes, an `output/` folder will appear next to your `docker-compose.yml` with:
 - `collision_map.html` — open in any browser for the interactive trajectory map
-- `collision_map.png` — static image for reports
+- `collision_map.png` — static chart for reports (shown at the top of this README)
 
 **Expected runtime:** 2–4 hours depending on machine speed and disk I/O.
 
 ---
 
-### Building the image yourself
+### Building the image yourself (optional)
 
 ```bash
 git clone https://github.com/OnkarBasu/Big_data_final_exam.git
@@ -645,13 +750,11 @@ docker compose build
 docker compose up
 ```
 
-> `docker-compose.yml` in the repo uses `build: .` (for local builds). The file shown above uses `image: onkar45612/vessel-collision:latest` (for pulling from Docker Hub). Choose accordingly.
-
 ---
 
 ## Running Locally on Windows
 
-Requires Java 21 (Temurin) and Python 3.13.
+Requires Java 21 (Temurin) and Python 3.13 installed.
 
 ```powershell
 pip install -r requirements.txt
@@ -663,7 +766,7 @@ cd vessel-collision
 python pipeline_run.py
 ```
 
-To test with a single file before running all 31, set `TEST_FILES = 1` at the top of `pipeline_run.py`.
+Set `TEST_FILES = 1` near the top of `pipeline_run.py` for a quick single-file test before running all 31.
 
 | Mode | Files | Expected Time |
 |---|---|---|
@@ -674,7 +777,7 @@ To test with a single file before running all 31, set `TEST_FILES = 1` at the to
 
 ## Requirements
 
-- Docker Desktop (for containerised run) or Java 21 + Python 3.13 (for local run)
+- Docker Desktop — for the containerised run
 - 8 GB RAM minimum (16 GB recommended)
-- 100 GB free disk space (57 GB data + Spark temp)
+- 100 GB free disk space
 - AIS CSV files for December 2021 from aisdata.ais.dk

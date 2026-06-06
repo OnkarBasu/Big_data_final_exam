@@ -1,6 +1,7 @@
 data/*.csv
 data/*.zip
-output/
+output/*.html
+# output PNG images are tracked for README display
 __pycache__/
 *.pyc
 .env
