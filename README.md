@@ -25,7 +25,7 @@ MV Scot Carrier, a 130-metre British cargo ship travelling at approximately 12 k
 
 ### Trajectory Map and Speed Profile
 
-![Vessel Trajectories and Speed Profile](output/collision_map.png)
+![Vessel Trajectories and Speed Profile](output/collision_map101.png)
 
 **What the charts show:**
 
@@ -130,7 +130,7 @@ vessel-collision/
 │   └── aisdk-2021-12-*.csv
 ├── output/
 │   ├── collision_map.html ← Interactive browser map (generated)
-│   └── collision_map.png  ← Static chart (tracked in git)
+│   └── collision_map101.png ← Static chart (tracked in git)
 └── src/
     ├── config.py          ← All constants (thresholds, paths, coordinates)
     ├── ingest.py          ← File discovery
