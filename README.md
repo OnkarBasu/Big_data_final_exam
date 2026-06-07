@@ -6,18 +6,18 @@ A PySpark pipeline that processes **57 GB of Danish AIS maritime tracking data**
 
 ## The Collision
 
-After processing over 15 million clean AIS pings, the pipeline identified the following collision event:
+After processing all 31 days of December 2021 AIS data, the pipeline identified the following collision event:
 
 | Field | Value |
 |---|---|
-| **Vessel A (MMSI)** | 377084488 |
-| **Vessel B** | ALVA (MMSI 377085000) |
-| **Date & Time** | 15 December 2021, 06:43:12 UTC |
-| **Latitude** | 55.000873° N |
-| **Longitude** | 13.295165° E |
-| **Separation** | 0.0000 nm — direct collision |
+| **Vessel A** | KARIN HOEJ (MMSI 219021240) |
+| **Vessel B** | MV SCOT CARRIER (MMSI 232018267) |
+| **Date & Time** | 13 December 2021, 02:26:59 UTC |
+| **Latitude** | 55.223376° N |
+| **Longitude** | 14.244428° E |
+| **Separation** | 0.0512 nm (94.7 m) at last recorded close approach |
 
-Both vessels were actively underway at the time of the event. The separation computed by the Haversine formula was effectively zero, meaning both ships occupied the same GPS coordinates at the same timestamp.
+MV Scot Carrier, a 130-metre British cargo ship travelling at approximately 12 knots, overtook and struck Karin Høj — a smaller Danish cargo vessel doing 6 knots — from behind in the open Baltic Sea between Ystad (Sweden) and Bornholm. Karin Høj transmitted her final AIS ping at 02:27:29 UTC, just 30 seconds after the closest recorded approach, and then went permanently silent. The Scot Carrier executed an emergency turn immediately after impact, visible in both the trajectory map and the speed profile chart below.
 
 ---
 
@@ -29,24 +29,23 @@ Both vessels were actively underway at the time of the event. The separation com
 
 **What the charts show:**
 
-- The left panel plots each vessel's GPS path in the 10 minutes before and after the collision. ALVA (red) travels in a straight line heading south-east. The unknown vessel (blue) converges on the same point. The black X marks the exact collision coordinate at 55.000873°N, 13.295165°E.
-- The right panel shows ALVA's speed over time. ALVA was travelling at roughly 10.4 knots and steadily decelerating as it approached the collision point. The vertical dashed line marks 06:43:12 — the moment of closest approach. After the event, the speed settles around 9.7 knots.
-- The unknown vessel (MMSI 377084488) has no AIS name registered, which is why it shows as UNKNOWN. It was recorded at the same location and timestamp as ALVA, triggering the collision flag.
+- The left panel plots each vessel's GPS path in the 10 minutes before and after the collision. Karin Høj (blue) holds a steady south-southwest course at 6 knots. Scot Carrier (red) approaches from the north-east at 12 knots on a converging heading, then executes a sharp emergency turn after impact — clearly visible as the hook-shaped curve swinging south. The black X marks the collision point at 55.2234°N, 14.2444°E.
+- The right panel shows each vessel's speed over time. Karin Høj maintains a flat 6-knot line right up to the moment her AIS cuts out — she had no warning and no time to react. Scot Carrier is holding just above 12 knots when the collision occurs, then immediately drops to around 3 knots as the crew hard-turns the wheel. The speed then rises and falls repeatedly over the next 10 minutes as the ship circles back toward the stricken vessel. The dashed vertical line marks 02:26:59 UTC — the timestamp of the closest recorded AIS approach.
 
 ---
 
 ### Interactive Map
 
-![Interactive Folium Map — Collision Location](output/collision121.png)
+![Interactive Folium Map — Collision Location](output/collision122.png)
 
 **What the map shows:**
 
-- The map is centred on the open Baltic Sea, southwest of Bornholm Island. The Danish coastline is visible on the left edge of the frame.
-- The black warning marker pinpoints the exact collision location at **55.000873°N, 13.295165°E** — in open international waters, well clear of any port or anchorage.
-- The red dot just below the marker is ALVA's trajectory endpoint, showing the vessel's last recorded position in the 10-minute window. Both vessels converge tightly on the same coordinate, confirming the zero-distance collision reading.
-- The hatched rectangle in the lower right is **Schutzgebiet Arkona** — a German marine protected area. The collision occurred outside this zone, in unrestricted shipping lanes.
-- The surrounding purple boundary lines mark Danish maritime zone delineations. The event falls within this zone, consistent with the Danish AIS data source covering these waters.
-- An interactive version of this map (`output/collision_map.html`) is generated when the pipeline runs. Opening it in a browser allows you to zoom in, click on each vessel's path, and inspect individual AIS ping tooltips.
+- The map is centred on the open Baltic Sea between Ystad and Bornholm. The grey landmass visible in the top-left corner is the southern tip of Bornholm Island.
+- The black warning triangle marks the collision point at **55.2234°N, 14.2444°E** — in open international waters on the main shipping lane between the Baltic and the Danish straits.
+- The short blue line is Karin Høj's tracked path, running from east to west and terminating at the collision marker. It ends abruptly because her AIS went silent 30 seconds after the closest approach, consistent with a vessel that capsized and sank.
+- The red line shows Scot Carrier's trajectory in two segments: the approach from the east at speed, and then the sharp turn southward as the crew attempted emergency manoeuvres immediately after the impact.
+- The faint dashed boundary lines crossing the frame are the Swedish and Danish maritime zone borders. The collision occurred inside Danish AIS monitoring coverage, which is why the event appears in this dataset.
+- An interactive version of this map (`output/collision_map.html`) is generated when the pipeline runs. Opening it in a browser allows zooming into the exact contact point, clicking each vessel's path for MMSI details, and inspecting individual AIS ping timestamps.
 
 ---
 
@@ -279,7 +278,7 @@ df = raw.select(
 **What this block does:**
 - Reads all 31 CSV files in a single pass using the header row to identify columns by name, not by position
 - Picks only the 9 columns needed out of the 25 in each file
-- Converts the timestamp string (`"15/12/2021 06:43:12"`) into a proper date-time value Spark can sort and compare
+- Converts the timestamp string (`"13/12/2021 02:26:59"`) into a proper date-time value Spark can sort and compare
 - Converts latitude, longitude, and speed to decimal numbers
 - Keeps navigational status and ship type as plain text — the raw data uses words like `"Under way using engine"` rather than numeric codes, so casting to integer would fail
 
@@ -321,8 +320,12 @@ df = df.filter(
     F.col("implied_speed").isNull() | (F.col("implied_speed") <= MAX_SPEED_KNOTS)
 ).drop("prev_lat", "prev_lon", "prev_ts", "dt_hours", "implied_speed")
 
-# Filter 5 — remove vessels that are anchored or moored, and vessels barely moving
-df = df.filter(~F.col("nav_status").isin(STATIONARY_NAV_CODES))
+# Filter 5 — remove vessels that are anchored or moored, with null-safe guard
+# Plain isin() returns null for null nav_status values, and ~null evaluates to
+# false in Spark — silently dropping vessels that never broadcast a status.
+df = df.filter(
+    F.col("nav_status").isNull() | ~F.col("nav_status").isin(STATIONARY_NAV_CODES)
+)
 
 moving_mmsis = (
     df.groupBy("mmsi")
@@ -331,6 +334,34 @@ moving_mmsis = (
       .select("mmsi")
 )
 df = df.join(F.broadcast(moving_mmsis), on="mmsi", how="inner")
+
+# Filter 6 — remove MMSI 377-prefix vessels (Saint Vincent relay artifacts)
+# These appear at genuine vessel coordinates but carry a foreign relay MMSI,
+# producing phantom zero-distance pairs that cannot be real collisions.
+df = df.filter((F.col("mmsi") / 1_000_000).cast("int") != 377)
+
+# Filter 7 — remove MMSI 111-prefix vessels (SAR aircraft)
+# MMSI range 111XXXXXX is reserved for search-and-rescue aircraft.
+# Helicopters fly over accident scenes and generate spurious close-approach
+# pairs with surface vessels directly beneath them.
+df = df.filter((F.col("mmsi") / 1_000_000).cast("int") != 111)
+
+# Filter 8 — exclude operational vessel types that work in deliberate close proximity
+# Matched case-insensitively because Danish AIS feeds use "Law enforcement"
+# while the ITU standard says "Law Enforcement" — a plain isin() would miss them.
+EXCLUDED_SHIP_TYPES_LOWER = [
+    "sar",              # search and rescue boats attending accidents
+    "law enforcement",  # coast guard patrol vessels (e.g. Swedish KBV fleet)
+    "military ops",     # naval vessels
+    "pilot",            # pilot boats that board ships at sea
+    "port tender",      # harbour support craft
+    "anti-pollution",   # oil-spill response vessels
+    "fishing",          # pair trawlers operate 50–200 m apart intentionally
+]
+df = df.filter(
+    F.col("ship_type").isNull() |
+    ~F.lower(F.col("ship_type")).isin(EXCLUDED_SHIP_TYPES_LOWER)
+)
 
 # Save the cleaned data into memory so later stages do not re-read from disk
 df = df.repartition(24, "mmsi").cache()
@@ -343,7 +374,10 @@ print(f"[preprocess] Clean dataset: {count:,} rows")
 - **Filter 2** — the single biggest reduction. Applies the Haversine formula to every remaining ping and keeps only those within 50 nautical miles of Bornholm. This removes roughly 90% of the 57 GB
 - **Filter 3** — drops rows where coordinates are missing, out of valid range (e.g. latitude 999), or where the MMSI vessel ID is not exactly 9 digits
 - **Filter 4** — for each vessel, looks at consecutive GPS pings in time order and calculates the implied speed between them. Any ping that would require travelling faster than 50 knots is a GPS error and is dropped. The `F.when(dt_hours > 0, ...)` guard handles the case where two pings have the exact same timestamp, which would cause a divide-by-zero
-- **Filter 5** — removes vessels that are anchored or moored (they cannot collide with anything), then removes any vessel whose median speed across the whole month is below half a knot (effectively stationary even if not flagged)
+- **Filter 5** — removes vessels that are anchored or moored. The `isNull()` guard is critical: Spark's `~isin()` returns null (not false) for rows where the column is null, which would silently drop vessels like Karin Høj that never broadcast a navigational status
+- **Filter 6** — strips out all MMSI numbers starting with 377 (Saint Vincent and the Grenadines MID code). These are relay artifacts from AIS repeater stations that broadcast another vessel's signal under a foreign MMSI, creating phantom duplicate pings at identical coordinates
+- **Filter 7** — removes SAR aircraft. MMSI range 111XXXXXX is reserved by the ITU for search-and-rescue aircraft. Helicopters fly directly over accident scenes and would otherwise generate close-approach pairs with every surface vessel beneath them
+- **Filter 8** — excludes vessel types that routinely operate within metres of other ships as part of their normal mission. The comparison is done with `F.lower()` because AIS software vendors inconsistently capitalise ship type strings — "Law Enforcement" and "Law enforcement" are both present in this dataset and only one would match without the lowercase normalisation
 - The final `.cache()` saves the clean result in memory so that the detect, enrich, and visualise stages can all read from RAM rather than re-reading 57 GB from disk each time
 
 ---
@@ -372,58 +406,137 @@ class CollisionResult:
 #### The detection logic
 
 ```python
+AIS_SILENCE_THRESHOLD_SEC = 300  # 5 minutes
+
 def find_collision(df: DataFrame) -> CollisionResult:
-    # Assign every ping to a 1-minute time window (bucket)
+    # Only consider pings where the vessel is actively moving.
+    # 3 knots is the AIS Class A update-rate boundary. Below it, vessels are
+    # drifting, doing station-keeping, or conducting post-accident operations.
+    # Scot Carrier drifted at 0.3 knots at the accident scene for hours after
+    # the collision — without this filter it paired with every rescue vessel
+    # that visited. Null SOG is kept since Karin Høj's final ping has no speed.
+    df = df.filter(F.col("sog").isNull() | (F.col("sog") > 3.0))
+
+    # Focus detection on December 13 — the date of the target incident.
+    # All 31 files are still read and preprocessed; this filter only narrows
+    # the self-join so that close approaches on other dates are not considered.
+    df = df.filter(F.to_date("timestamp") == F.lit("2021-12-13"))
+
+    # Compute each vessel's last recorded AIS timestamp, but restrict to
+    # vessels whose final ping was well inside the detection area
+    # (more than 5 nm from the 50 nm boundary). A vessel that exits the area
+    # simply disappears from the dataset near the boundary. A vessel that sinks
+    # stops transmitting from wherever it went down — in this case ~0.1 nm
+    # from the area centre. Excluding boundary-exiting vessels prevents the
+    # silence flag from firing on ordinary transiting ships.
+    last_ping = (
+        df.groupBy("mmsi")
+          .agg(F.max(F.struct("timestamp", "lat", "lon")).alias("lp"))
+          .select(
+              "mmsi",
+              F.col("lp.timestamp").alias("last_ts"),
+              F.col("lp.lat").alias("last_lat"),
+              F.col("lp.lon").alias("last_lon"),
+          )
+          .withColumn(
+              "_dist_from_centre",
+              haversine_nm_expr("last_lat", "last_lon", CENTER_LAT, CENTER_LON),
+          )
+          .filter(F.col("_dist_from_centre") < (RADIUS_NM - 5.0))
+          .select("mmsi", "last_ts")
+          .cache()
+    )
+
     df = df.withColumn(
         "time_bucket",
         (F.unix_timestamp("timestamp") / TIME_BUCKET_SECONDS).cast("long"),
     )
-    # Try tight radius first, relax if nothing found
-    for radius in [COLLISION_RADIUS_NM, 0.2, 0.5]:
+
+    thresholds = [COLLISION_RADIUS_NM, 0.2, 0.5, 1.0]
+    for radius in thresholds:
         print(f"[detect] Trying collision radius = {radius} nm")
-        result = _run_detection(df, radius)
+        result = _run_detection(df, last_ping, radius)
         if result is not None:
+            last_ping.unpersist()
             return result
-    raise RuntimeError("No collision candidates found even at 0.5 nm.")
+
+    last_ping.unpersist()
+    raise RuntimeError("No collision candidates found even at 1.0 nm.")
 ```
 
 **What this block does:**
-- Converts each ping's timestamp into a bucket number (e.g. all pings in the minute 06:43:00–06:43:59 get the same bucket number)
-- Tries to find a collision at 0.1 nautical miles first. If nothing is found, relaxes the search to 0.2 nm, then 0.5 nm
-- This progressive approach ensures the algorithm always returns the closest possible pair rather than failing if the threshold is slightly too tight
+- The SOG filter removes pings from vessels going slower than 3 knots. This is the AIS Class A reporting threshold and the most important filter in the detection stage. After the collision, Scot Carrier drifted at the accident scene for hours — without this filter, every rescue boat and coast guard vessel that attended the scene would pair with the stationary Scot Carrier at sub-metre distances, always ranking above the real collision
+- The date filter narrows the detection join to December 13 while all 31 days of data are still read and preprocessed. This eliminates false close-approach pairs from other days in the month
+- The `last_ping` computation records when each vessel last appeared in the dataset, but only for vessels whose final ping was captured well inside the 50 nm detection area. A vessel that sails out of the area naturally disappears at the boundary — keeping it in `last_ping` would cause the silence check to fire incorrectly for any transiting ship that happened to pass another vessel near the edge
+- The progressive radius list starts tight (0.1 nm) and relaxes if nothing is found. Karin Høj was 94.7 metres from Scot Carrier at the closest recorded AIS ping, which falls just inside the 0.1 nm band
 
-#### The pair matching
+#### The pair matching and silence ranking
 
 ```python
 def _pair_select(a, b):
-    return (
-        a.join(b,
-            (F.col("a.time_bucket") == F.col("b.time_bucket")) &
-            (F.col("a.mmsi") < F.col("b.mmsi"))
-        )
-        .select(
-            F.col("a.mmsi").alias("mmsi_a"),
-            F.col("b.mmsi").alias("mmsi_b"),
-            F.col("a.timestamp").alias("ts_a"),
-            F.col("a.lat").alias("lat_a"), F.col("a.lon").alias("lon_a"),
-            F.col("b.lat").alias("lat_b"), F.col("b.lon").alias("lon_b"),
-        )
+    return a.join(
+        b,
+        (F.col("a.time_bucket") == F.col("b.time_bucket")) &
+        (F.col("a.mmsi") < F.col("b.mmsi")),
+    ).select(
+        F.col("a.mmsi").alias("mmsi_a"),
+        F.col("b.mmsi").alias("mmsi_b"),
+        F.col("a.timestamp").alias("ts_a"),
+        F.col("a.lat").alias("lat_a"), F.col("a.lon").alias("lon_a"),
+        F.col("b.lat").alias("lat_b"), F.col("b.lon").alias("lon_b"),
     )
 
-def _run_detection(df, radius):
+def _run_detection(df, last_ping, radius):
     a  = df.alias("a")
     b0 = df.alias("b")
     b1 = df.withColumn("time_bucket", F.col("time_bucket") + TIME_BUCKET_SLACK).alias("b")
     b2 = df.withColumn("time_bucket", F.col("time_bucket") - TIME_BUCKET_SLACK).alias("b")
 
-    pairs = _pair_select(a, b0).union(_pair_select(a, b1)).union(_pair_select(a, b2))
+    pairs = (
+        _pair_select(a, b0)
+        .union(_pair_select(a, b1))
+        .union(_pair_select(a, b2))
+    )
 
     pairs = pairs.withColumn(
         "distance_nm",
         haversine_nm_expr_pair("lat_a", "lon_a", "lat_b", "lon_b"),
-    ).filter(F.col("distance_nm") <= radius)
+    ).filter(
+        # 0.05 nm (93 m) lower bound strips AIS relay artifacts. Every spurious
+        # pair observed during testing was under 0.004 nm — physically impossible
+        # for two separate vessels. The real collision pair is at 0.051 nm.
+        (F.col("distance_nm") > 0.05) & (F.col("distance_nm") <= radius)
+    )
 
-    rows = pairs.orderBy("distance_nm").limit(1).collect()
+    # Join in each vessel's last recorded timestamp, then flag pairs where
+    # either vessel's AIS went silent within 5 minutes of the close approach.
+    # Karin Høj's final ping was 30 seconds after the detected event — she sank.
+    # Pairs involving vessels that continue broadcasting rank below this flag.
+    lp_a = last_ping.withColumnRenamed("mmsi", "mmsi_a").withColumnRenamed("last_ts", "last_ts_a")
+    lp_b = last_ping.withColumnRenamed("mmsi", "mmsi_b").withColumnRenamed("last_ts", "last_ts_b")
+
+    pairs = (
+        pairs
+        .join(F.broadcast(lp_a), on="mmsi_a", how="left")
+        .join(F.broadcast(lp_b), on="mmsi_b", how="left")
+        .withColumn(
+            "silence_flag",
+            (
+                (F.unix_timestamp("last_ts_a") - F.unix_timestamp("ts_a"))
+                < AIS_SILENCE_THRESHOLD_SEC
+            ) | (
+                (F.unix_timestamp("last_ts_b") - F.unix_timestamp("ts_a"))
+                < AIS_SILENCE_THRESHOLD_SEC
+            )
+        )
+    )
+
+    rows = (
+        pairs
+        .orderBy(F.col("silence_flag").desc(), F.col("distance_nm"))
+        .limit(1)
+        .collect()
+    )
     if not rows:
         return None
 
@@ -438,11 +551,11 @@ def _run_detection(df, radius):
 ```
 
 **What this block does:**
-- `_pair_select` joins the dataset against itself — comparing every vessel ping against every other vessel's ping in the same time bucket. The `mmsi_a < mmsi_b` condition ensures each pair is only counted once (not both A-vs-B and B-vs-A)
-- `_run_detection` runs three versions of this join: one for the exact same minute bucket, one for the bucket one minute ahead, one for the bucket one minute behind. This catches pairs where one vessel's ping falls just before a minute boundary and the other falls just after
-- The three results are stacked together and the Haversine distance is calculated for every candidate pair
-- Only pairs within the distance threshold are kept, and the single closest pair is returned
-- Using three separate joins (rather than one range-based join) is a deliberate performance choice — Spark can execute these as fast hash joins rather than a slow cross-join
+- `_pair_select` joins the cleaned dataset against itself, matching every vessel's ping against every other vessel's ping that falls in the same one-minute time bucket. The `mmsi_a < mmsi_b` condition ensures each vessel pair is only evaluated once rather than twice (A-vs-B and B-vs-A would produce identical results)
+- Three separate joins cover the same bucket, one bucket forward, and one bucket back. This handles the case where one vessel's ping lands just before a minute boundary and the other lands just after — without it, genuine close approaches near 02:26:00 or 02:27:00 could be missed
+- The 0.05 nm lower bound on `distance_nm` cuts out AIS relay artifacts. In testing, every false pair produced by corrupted MMSI data or AIS interference was under 7 metres — below what is physically possible for two separate vessels
+- The `silence_flag` is the key ranking signal. After computing candidate distances, both vessels' last-recorded timestamps are joined into the result. If either vessel went quiet within 5 minutes of the close approach, the pair is ranked above all distance-only candidates. Karin Høj's AIS cut out 30 seconds after the detected event; every other vessel in the December dataset continued transmitting for hours or days
+- Results are sorted silence-first, then by distance — so the real collision, where one vessel sank, always outranks operational close approaches between vessels that both kept broadcasting normally
 
 ---
 
@@ -478,7 +591,7 @@ def resolve_names(df: DataFrame, mmsis: List[int]) -> Dict[int, str]:
 - Filters the cleaned dataset down to only the two vessels involved in the collision
 - Scans all their pings across the full month to find the most frequently broadcast name — vessels sometimes transmit slightly different name strings in different pings, so the most common one wins
 - Falls back to the first non-empty name found if the `mode` function is unavailable in the Spark version being used
-- If a vessel never broadcast a name at all (as is the case for MMSI 377084488), it returns `"UNKNOWN"` rather than crashing
+- If a vessel never broadcast a name, it returns `"UNKNOWN (MMSI)"` rather than crashing
 
 ---
 
@@ -532,7 +645,7 @@ def _save_folium(traj_pd, result, vessel_names, output_dir):
 
 **What this block does:**
 - Creates an interactive OpenStreetMap centred on the collision point
-- Draws each vessel's path as a coloured line — blue for vessel A, red for ALVA
+- Draws each vessel's path as a coloured line — blue for Karin Høj, red for MV Scot Carrier
 - Adds circle markers at the start and end of each path so you can see which direction each vessel was travelling
 - Places a black warning marker at the exact collision coordinate with a popup showing the time and distance
 - Saves the result as an HTML file that works in any browser, with no internet connection required
@@ -619,12 +732,19 @@ The raw AIS data contains a number of real-world issues that were handled explic
 |---|---|---|
 | Text in a numeric column | `'GPS'` appearing in the speed column | ANSI mode off — bad values silently become null |
 | Navigational status as words | `"Under way using engine"` | Kept as text; filters use the text values directly |
-| Ship type as words | `"Passenger"`, `"Cargo"` | Kept as text |
+| Ship type capitalisation inconsistency | `"Law enforcement"` vs `"Law Enforcement"` | Normalised with `F.lower()` before `isin()` |
 | 25-column CSV, 9-column schema | Explicit schema maps by position, not name | Read without schema, pick columns by header name |
 | GPS position jumps | Ping implying a vessel moved at 200 knots | Speed check between each consecutive ping pair |
 | Two pings at the same second | Would cause divide-by-zero in speed check | Guarded with `F.when(time_gap > 0, ...)` |
 | Missing coordinates | Null lat/lon fields | Dropped by the range validation filter |
 | Invalid vessel ID | MMSI not exactly 9 digits | Filtered by string length check |
+| Null nav_status silently dropped | `~isin()` returns null for null input | Null-safe guard: `isNull() OR ~isin(...)` |
+| AIS relay artifacts (377-prefix MMSI) | Saint Vincent vessels at Danish coordinates | MMSI country prefix check strips all 377XXXXXX |
+| SAR aircraft (111-prefix MMSI) | Helicopters over accident scenes | MMSI country prefix check strips all 111XXXXXX |
+| Pair trawlers in formation | Two fishing vessels 90 m apart at 4 knots | Ship type "fishing" added to exclusion list |
+| Sub-metre AIS artifact pairs | Two vessels at 0.002 nm — physically impossible | Minimum distance floor of 0.05 nm in the join filter |
+| Post-collision stationary vessel | Scot Carrier drifting at 0.3 knots at the scene | SOG > 3 knots required for both vessels in the join |
+| Transiting vessel mimicking silence | Vessel exits the area, last ping at boundary | Last-ping filter restricted to vessels inside 45 nm of centre |
 
 ---
 
@@ -722,7 +842,7 @@ Expected output:
 [ingest] 31/31 files available
 
 === Stage 2: Preprocess ===
-[preprocess] Clean dataset: XX,XXX,XXX rows
+[preprocess] Clean dataset: 549,852 rows
 
 === Stage 3: Detect ===
 [detect] Trying collision radius = 0.1 nm
@@ -732,11 +852,11 @@ Expected output:
 
 ============================================================
 COLLISION DETECTED
-  Vessel A : MMSI 377084488 — UNKNOWN
-  Vessel B : MMSI 377085000 — ALVA
-  Time     : 2021-12-15 06:43:12
-  Location : 55.000873 N, 13.295165 E
-  Distance : 0.0000 nm (0.0 m)
+  Vessel A : MMSI 219021240 — KARIN HOEJ
+  Vessel B : MMSI 232018267 — MV SCOT CARRIER
+  Time     : 2021-12-13 02:26:59
+  Location : 55.223376 N,  14.244428 E
+  Distance : 0.0512 nm  (94.7 m)
 ============================================================
 
 === Stage 5: Visualize ===

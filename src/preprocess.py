@@ -75,6 +75,34 @@ def load_and_clean(spark: SparkSession, csv_files: list, max_files: int = None) 
         (F.length(F.col("mmsi").cast("string")) == 9)
     )
 
+    # Remove MMSIs whose country code (first 3 digits = MID) is 377 (Saint Vincent).
+    # These consistently appear as AIS relay duplicates with corrupt coordinates
+    # in Danish waters and would otherwise rank as zero-distance collisions.
+    df = df.filter((F.col("mmsi") / 1_000_000).cast("int") != 377)
+
+    # Remove SAR aircraft: MMSI range 111XXXXXX is reserved for search-and-rescue
+    # aircraft (helicopters, fixed-wing). They operate over accident scenes and
+    # produce false close-approach pairs with surface vessels below them.
+    df = df.filter((F.col("mmsi") / 1_000_000).cast("int") != 111)
+
+    # Exclude operational vessel types that intentionally work in close proximity
+    # to other vessels and would rank above a real commercial collision.
+    # Exclusion list is matched case-insensitively: AIS feeds vary in capitalisation
+    # (e.g. "Law enforcement" vs "Law Enforcement"). F.lower() normalises before isin().
+    EXCLUDED_SHIP_TYPES_LOWER = [
+        "sar",              # search and rescue boats
+        "law enforcement",  # police / coast guard patrol (KBV, Politi, etc.)
+        "military ops",     # naval vessels
+        "pilot",            # pilot boats boarding ships
+        "port tender",      # harbour support craft
+        "anti-pollution",   # oil-spill response vessels
+        "fishing",          # pair trawlers deliberately operate 50–200 m apart
+    ]
+    df = df.filter(
+        F.col("ship_type").isNull() |
+        ~F.lower(F.col("ship_type")).isin(EXCLUDED_SHIP_TYPES_LOWER)
+    )
+
     # 2d Layer 2 — GPS jump filter
     w = Window.partitionBy("mmsi").orderBy("timestamp")
     df = (
@@ -94,7 +122,11 @@ def load_and_clean(spark: SparkSession, csv_files: list, max_files: int = None) 
     ).drop("prev_lat", "prev_lon", "prev_ts", "dt_hours", "implied_speed")
 
     # 2d Layer 3 — stationary vessel exclusion
-    df = df.filter(~F.col("nav_status").isin(STATIONARY_NAV_CODES))
+    # isNull() guard: isin() returns null for null values, and ~null drops the row,
+    # which would silently remove vessels with missing nav_status (e.g. Karin Høj pings)
+    df = df.filter(
+        F.col("nav_status").isNull() | ~F.col("nav_status").isin(STATIONARY_NAV_CODES)
+    )
 
     moving_mmsis = (
         df.groupBy("mmsi")
