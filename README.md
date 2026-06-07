@@ -282,7 +282,7 @@ df = raw.select(
 - Converts latitude, longitude, and speed to decimal numbers
 - Keeps navigational status and ship type as plain text — the raw data uses words like `"Under way using engine"` rather than numeric codes, so casting to integer would fail
 
-#### The five cleaning filters
+#### The 8 cleaning filters
 
 ```python
 # Filter 1 — keep only December 2021 records
