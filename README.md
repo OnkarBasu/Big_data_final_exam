@@ -417,11 +417,6 @@ def find_collision(df: DataFrame) -> CollisionResult:
     # that visited. Null SOG is kept since Karin Høj's final ping has no speed.
     df = df.filter(F.col("sog").isNull() | (F.col("sog") > 3.0))
 
-    # Focus detection on December 13 — the date of the target incident.
-    # All 31 files are still read and preprocessed; this filter only narrows
-    # the self-join so that close approaches on other dates are not considered.
-    df = df.filter(F.to_date("timestamp") == F.lit("2021-12-13"))
-
     # Compute each vessel's last recorded AIS timestamp, but restrict to
     # vessels whose final ping was well inside the detection area
     # (more than 5 nm from the 50 nm boundary). A vessel that exits the area
@@ -466,7 +461,6 @@ def find_collision(df: DataFrame) -> CollisionResult:
 
 **What this block does:**
 - The SOG filter removes pings from vessels going slower than 3 knots. This is the AIS Class A reporting threshold and the most important filter in the detection stage. After the collision, Scot Carrier drifted at the accident scene for hours — without this filter, every rescue boat and coast guard vessel that attended the scene would pair with the stationary Scot Carrier at sub-metre distances, always ranking above the real collision
-- The date filter narrows the detection join to December 13 while all 31 days of data are still read and preprocessed. This eliminates false close-approach pairs from other days in the month
 - The `last_ping` computation records when each vessel last appeared in the dataset, but only for vessels whose final ping was captured well inside the 50 nm detection area. A vessel that sails out of the area naturally disappears at the boundary — keeping it in `last_ping` would cause the silence check to fire incorrectly for any transiting ship that happened to pass another vessel near the edge
 - The progressive radius list starts tight (0.1 nm) and relaxes if nothing is found. Karin Høj was 94.7 metres from Scot Carrier at the closest recorded AIS ping, which falls just inside the 0.1 nm band
 
